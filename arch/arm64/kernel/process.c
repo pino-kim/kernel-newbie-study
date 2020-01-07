@@ -499,13 +499,21 @@ __notrace_funcgraph struct task_struct *__switch_to(struct task_struct *prev,
 {
 	struct task_struct *last;
 
+	// 이전 테스크의 부동소수점과 Single instruction, multiple data 를 위한 구조체 정보를 기록 ?
 	fpsimd_thread_switch(next);
+	// 이전 테스크의 고유 쓰레드 정적 변수를 다음 테스크 구조체에 기록?
 	tls_thread_switch(next);
+	// 이전테스크의 하드웨어 중단점 포인트를 다음테스크 구조체에 기록 ?
 	hw_breakpoint_thread_switch(next);
+	// 이전 테스크의 PID 정보를 다음 테스크 구조체에 기록 ? 
 	contextidr_thread_switch(next);
+	// 이전 테스크의 엔트리 정보를 다음 테스크 구조체에 기록 ?
 	entry_task_switch(next);
+	// 이전 테스크의 User Acess Overrride 정보를 다음 테스크 구조체에 기록 ? 
 	uao_thread_switch(next);
-	ptrauth_thread_switch(next);
+	// 이전 테스크의 pointer authentication 정보를 다음 테스크 구조체에 기록 ?
+	ptrauth_thread_switch(next); 
+	// 이전 테스크의 Speculative Store Bypass 상태를 다음 테스크의 구조체에 기록 ?
 	ssbs_thread_switch(next);
 
 	/*
@@ -514,9 +522,13 @@ __notrace_funcgraph struct task_struct *__switch_to(struct task_struct *prev,
 	 * This full barrier is also required by the membarrier system
 	 * call.
 	 */
+	// 인스트럭션 오더링이 변경될수 있기 때문에 아래 명령어를 실행한다
+	// 이 명령어 앞에 있는 모든 명시적 메모리 액세스가 완료될 경우 다음 사항이 적용됩니다.
+	// 이 명령어 앞에 있는 모든 캐시, 분기 예측기 및 TLB 유지관리 작업이 완료될 경우 다음 사항이 적용됩니다.
 	dsb(ish);
 
 	/* the actual thread switch */
+	// 실질적으로 이전 테스크의task 정보와 다음 테스크의 레지스트 정보와 커널 스텍을 스위칭 한다.   
 	last = cpu_switch_to(prev, next);
 
 	return last;

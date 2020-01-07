@@ -3074,6 +3074,8 @@ static inline void prepare_task(struct task_struct *next)
 	 * Claim the task as running, we do this before switching to it
 	 * such that any running task will have this set.
 	 */
+	// CONFIG_SMP 설정 시
+	// 다음 테스크를 cpu에 넣기위에 구조체의 on_cpu를 1로 설정한다.
 	next->on_cpu = 1;
 #endif
 }
@@ -3091,7 +3093,10 @@ static inline void finish_task(struct task_struct *prev)
 	 *
 	 * Pairs with the smp_cond_load_acquire() in try_to_wake_up().
 	 */
-	smp_store_release(&prev->on_cpu, 0);
+	// 이전 테스크가 점유하고 있는 cpu를 초기화 해주는 역활을 함 
+	// CONFIG_SMP 가 설정되어 있을 시 smp_store_release 함수를 
+	// 사용하여 초기화를 하는 이는 다중 프로세서를 사용시 동시성 문제를 보장한다.
+	smp_store_release(&prev->on_cpu, 0); 
 #endif
 }
 
@@ -3153,10 +3158,14 @@ prepare_task_switch(struct rq *rq, struct task_struct *prev,
 		    struct task_struct *next)
 {
 	kcov_prepare_switch(prev);
+	// 다은 테스크가 실행상태이면 해당 함수의 통계 정보를 수집
 	sched_info_switch(rq, prev, next);
 	perf_event_task_sched_out(prev, next);
+	// ?
 	rseq_preempt(prev);
+	// 다음 테스크에 의해 선점 당했을때 호출 하는 함수 ?
 	fire_sched_out_preempt_notifiers(prev, next);
+	// 다음 테스크가 사용됨을 on_cpu에 기록
 	prepare_task(next);
 	prepare_arch_switch(next);
 }
@@ -3183,9 +3192,9 @@ prepare_task_switch(struct rq *rq, struct task_struct *prev,
 static struct rq *finish_task_switch(struct task_struct *prev)
 	__releases(rq->lock)
 {
-	struct rq *rq = this_rq();
-	struct mm_struct *mm = rq->prev_mm;
-	long prev_state;
+	struct rq *rq = this_rq(); 현재 //cpu에서 runqueue 를 가져옴
+	struct mm_struct *mm = rq->prev_mm; // 이전 런큐의 메모리 값을 벡업 
+	long prev_state; 
 
 	/*
 	 * The previous task will have left us with a preempt_count of 2
@@ -3197,13 +3206,14 @@ static struct rq *finish_task_switch(struct task_struct *prev)
 	 *	    raw_spin_lock_irq(&rq->lock)	// 2
 	 *
 	 * Also, see FORK_PREEMPT_COUNT.
-	 */
-	if (WARN_ONCE(preempt_count() != 2*PREEMPT_DISABLE_OFFSET,
+	 */ //preempt_count 값이 2가 아닐시 다음과 같이 에러 코드를 반환한다.
+	if (WARN_ONCE(preempt_count() != 2*PREEMPT_DISABLE_OFFSET, 
 		      "corrupted preempt_count: %s/%d/0x%x\n",
 		      current->comm, current->pid, preempt_count()))
-		preempt_count_set(FORK_PREEMPT_COUNT);
+		preempt_count_set(FORK_PREEMPT_COUNT);			
 
-	rq->prev_mm = NULL;
+	// 런큐의 prev_mm을 백업했으니 이를 초기화한다.
+	rq->prev_mm = NULL; 
 
 	/*
 	 * A task struct has one reference for the use as "current".
@@ -3216,14 +3226,17 @@ static struct rq *finish_task_switch(struct task_struct *prev)
 	 * running on another CPU and we could rave with its RUNNING -> DEAD
 	 * transition, resulting in a double drop.
 	 */
-	prev_state = prev->state;
-	vtime_task_switch(prev);
+	prev_state = prev->state; 
+	vtime_task_switch(prev); 
 	perf_event_task_sched_in(prev, current);
-	finish_task(prev);
-	finish_lock_switch(rq);
-	finish_arch_post_lock_switch();
-	kcov_finish_switch(current);
+	//이전 테스크의 on_cpu를 초기화
+	finish_task(prev); 
+	//해당 런큐의 lock을 해제
+	finish_lock_switch(rq); 
+	finish_arch_post_lock_switch();  
+	kcov_finish_switch(current); 
 
+	//현재 테스크가 선점시 선점한다고 알리는 함수로 보임.
 	fire_sched_in_preempt_notifiers(current);
 	/*
 	 * When switching through a kernel thread, the loop in
@@ -3238,26 +3251,31 @@ static struct rq *finish_task_switch(struct task_struct *prev)
 	 * - a sync_core for SYNC_CORE.
 	 */
 	if (mm) {
-		membarrier_mm_sync_core_before_usermode(mm);
+		membarrier_mm_sync_core_before_usermode(mm);  
+		// 만약 mm의 참조 카우트를 감소하는게 실패하면 이전테스크  메모리의 자료구조를 모두 해제
 		mmdrop(mm);
 	}
-	if (unlikely(prev_state == TASK_DEAD)) {
-		if (prev->sched_class->task_dead)
-			prev->sched_class->task_dead(prev);
+	if (unlikely(prev_state == TASK_DEAD)) { 
+		// 이전 테크스가 종료 중이라면
+		if (prev->sched_class->task_dead) 
+			prev->sched_class->task_dead(prev); // 해당 테스크 클레스의task_dead 함수를 불러온다.
 
 		/*
 		 * Remove function-return probe instances associated with this
 		 * task and put them back on the free list.
 		 */
-		kprobe_flush_task(prev);
+		kprobe_flush_task(prev); 
 
 		/* Task is done with its stack. */
-		put_task_stack(prev);
+		 // 이전 테스크가 종료시 참조 카운터를 감소하고 task_struct 구조체를 초기화한다.
+		put_task_stack(prev); 
 
-		put_task_struct_rcu_user(prev);
+		put_task_struct_rcu_user(prev); 
 	}
 
-	tick_nohz_task_switch();
+	// COFNIG_NO_HZ_FULL이 enable 된경우해당루트로 진입.
+	tick_nohz_task_switch();  
+	// 런큐를 반환
 	return rq;
 }
 

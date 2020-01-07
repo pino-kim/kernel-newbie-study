@@ -17,7 +17,7 @@
  */
 extern struct task_struct *__switch_to(struct task_struct *,
 				       struct task_struct *);
-
+// 이전테스크의 구조체와 다음테스크의 구조체를 교체 후last 에 덮어쓴다. 
 #define switch_to(prev, next, last)					\
 	do {								\
 		((last) = __switch_to((prev), (next)));			\
