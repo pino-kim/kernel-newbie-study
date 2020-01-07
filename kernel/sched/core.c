@@ -3351,6 +3351,8 @@ static __always_inline struct rq *
 context_switch(struct rq *rq, struct task_struct *prev,
 	       struct task_struct *next, struct rq_flags *rf)
 {
+	// 이전 테스크의 구조체를 다음 테스크의 구조체로 변경하기 위한 준비를 한다.
+	// on_cpu 플레그를 1로 설정한다. 
 	prepare_task_switch(rq, prev, next);
 
 	/*
@@ -3367,15 +3369,21 @@ context_switch(struct rq *rq, struct task_struct *prev,
 	 * kernel ->   user   switch + mmdrop() active
 	 *   user ->   user   switch
 	 */
+	// 다음 테스크가 커널 테스크라면
 	if (!next->mm) {                                // to kernel
+		// 이전 테스크 구조체에서 ttb0 register 값을 업데이트 한다. ?
 		enter_lazy_tlb(prev->active_mm, next);
-
+		// 이전 테스크의 주소공간을 참조 한다.
 		next->active_mm = prev->active_mm;
+		// 이전 테스크가 유저 테스크 일시 참조 카운터를 증가한다.
 		if (prev->mm)                           // from user
 			mmgrab(prev->active_mm);
+		// 이전 테스크가 커널 테스크 라면 참조페이지를 초기화 한다.
 		else
 			prev->active_mm = NULL;
+	// 다음 테스크가 유저 테스크라면	
 	} else {                                        // to user
+		// 다음 테스크가 유저 공간의 주소를 참조한다.
 		membarrier_switch_mm(rq, prev->active_mm, next->mm);
 		/*
 		 * sys_membarrier() requires an smp_mb() between setting
@@ -3386,7 +3394,9 @@ context_switch(struct rq *rq, struct task_struct *prev,
 		 * finish_task_switch()'s mmdrop().
 		 */
 		switch_mm_irqs_off(prev->active_mm, next->mm, next);
-
+		
+		// 이전의 테스크가 커널 테스크라면 주소 공간을 참조 후에
+		// 유저공간인 이전 테스크의 주소공간을 초기화 한다 	
 		if (!prev->mm) {                        // from kernel
 			/* will mmdrop() in finish_task_switch(). */
 			rq->prev_mm = prev->active_mm;
@@ -3399,6 +3409,7 @@ context_switch(struct rq *rq, struct task_struct *prev,
 	prepare_lock_switch(rq, next, rf);
 
 	/* Here we just switch the register state and the stack. */
+	//레지스트 상태와 스텍을 교체한다.
 	switch_to(prev, next, prev);
 	barrier();
 

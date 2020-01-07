@@ -218,8 +218,10 @@ static inline void __switch_mm(struct mm_struct *next)
 	 * init_mm.pgd does not contain any user mappings and it is always
 	 * active for kernel addresses in TTBR1. Just set the reserved TTBR0.
 	 */
-	if (next == &init_mm) {
-		cpu_set_reserved_ttbr0();
+	//다음 테스크의 구조체가 init_mm 임을 확인한뒤 ttbr0 레지스트를 
+    if (next == &init_mm) {
+		//페이지 테이블의 시작주소로 가르키게 한다.
+        cpu_set_reserved_ttbr0();
 		return;
 	}
 
@@ -239,6 +241,7 @@ switch_mm(struct mm_struct *prev, struct mm_struct *next,
 	 * ASID has changed since the last run (following the context switch
 	 * of another thread of the same process).
 	 */
+    // next 구조체에 ttbr0 레지스터를 업데이트 한다.
 	update_saved_ttbr0(tsk, next);
 }
 
