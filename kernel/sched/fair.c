@@ -4063,6 +4063,7 @@ dequeue_entity(struct cfs_rq *cfs_rq, struct sched_entity *se, int flags)
 	/*
 	 * Update run-time statistics of the 'current'.
 	 */
+	// cfs_rq 의통계값을 최신으로을 갱신한다.
 	update_curr(cfs_rq);
 
 	/*
@@ -4073,16 +4074,23 @@ dequeue_entity(struct cfs_rq *cfs_rq, struct sched_entity *se, int flags)
 	 *   - For group entity, update its weight to reflect the new share
 	 *     of its group cfs_rq.
 	 */
+	// cfs_rq의 se의 load averages를 업데이트한다.
 	update_load_avg(cfs_rq, se, UPDATE_TG);
+	// dequeue 시 runnable_load 값을 계산한다 ?
 	dequeue_runnable_load_avg(cfs_rq, se);
 
+	// dequeue 이후의 통계 정보를 업데이트 한다. 
 	update_stats_dequeue(cfs_rq, se, flags);
-
+	
+	// cfs_rq의 next, last, skip 엔티티 중 se와 같다면 초기화 한다.	
 	clear_buddies(cfs_rq, se);
 
+	// se 가 cfs_rq의 curr 가 아닐시 dequeue 한다.
 	if (se != cfs_rq->curr)
 		__dequeue_entity(cfs_rq, se);
+	// se를 런큐에서 해제 했으니 on_rq를 0으로 설정
 	se->on_rq = 0;
+	// cfs_rq의 weigh에서 se의 weight을 빼고 큐의 개수를  하나 제거한다. 
 	account_entity_dequeue(cfs_rq, se);
 
 	/*
@@ -4091,12 +4099,15 @@ dequeue_entity(struct cfs_rq *cfs_rq, struct sched_entity *se, int flags)
 	 * update_min_vruntime() again, which will discount @se's position and
 	 * can move min_vruntime forward still more.
 	 */
+	// flag에 DEQUEUE_SLEEP 가 없는 경우 se의 vruntime에서 cfs_rq의 최소 vruntime을 뺀다
 	if (!(flags & DEQUEUE_SLEEP))
 		se->vruntime -= cfs_rq->min_vruntime;
 
 	/* return excess runtime on last dequeue */
+	// 마지막dequeue 후 cfs_rq의 runtime을 반환한다.
 	return_cfs_rq_runtime(cfs_rq);
 
+	// 현재 그룹 런큐의 상태에 따라그룹 엔티티를 재계산하여 갱신한다.
 	update_cfs_group(se);
 
 	/*
@@ -4105,6 +4116,7 @@ dequeue_entity(struct cfs_rq *cfs_rq, struct sched_entity *se, int flags)
 	 * put back on, and if we advance min_vruntime, we'll be placed back
 	 * further than we started -- ie. we'll be penalized.
 	 */
+	// flag에 DEQUEUE_SAVE 설정이 아니면 cfs_rq의 최소 vruntime을 갱신한다.
 	if ((flags & (DEQUEUE_SAVE | DEQUEUE_MOVE)) != DEQUEUE_SAVE)
 		update_min_vruntime(cfs_rq);
 }
@@ -4153,18 +4165,24 @@ static void
 set_next_entity(struct cfs_rq *cfs_rq, struct sched_entity *se)
 {
 	/* 'current' is not kept within the tree. */
+	// 스케쥴러 엔티티가 런큐에 있을시 
 	if (se->on_rq) {
 		/*
 		 * Any task has to be enqueued before it get to execute on
 		 * a CPU. So account for the time it spent waiting on the
 		 * runqueue.
 		 */
+		// 스케줄러 대기관련 통계정보를 설정
 		update_stats_wait_end(cfs_rq, se);
+		// 해당 런큐를 dequeue 한다.
 		__dequeue_entity(cfs_rq, se);
+		// 
 		update_load_avg(cfs_rq, se, UPDATE_TG);
 	}
-
+	
+	// 스케쥴러 시작관련 통계값들을 설정
 	update_stats_curr_start(cfs_rq, se);
+	// cfs 런큐의 curr을 인자값으로 받은 스케쥴러 엔티티로 설정한다.
 	cfs_rq->curr = se;
 
 	/*
@@ -4172,6 +4190,7 @@ set_next_entity(struct cfs_rq *cfs_rq, struct sched_entity *se)
 	 * least twice that of our own weight (i.e. dont track it
 	 * when there are only lesser-weight tasks around):
 	 */
+	// 최대 타임슬라이스 값을 계산한다. 
 	if (schedstat_enabled() &&
 	    rq_of(cfs_rq)->cfs.load.weight >= 2*se->load.weight) {
 		schedstat_set(se->statistics.slice_max,
@@ -4179,6 +4198,7 @@ set_next_entity(struct cfs_rq *cfs_rq, struct sched_entity *se)
 			    se->sum_exec_runtime - se->prev_sum_exec_runtime));
 	}
 
+	// 스케쥴러 엔티티의 이전 실행시간을 갱신한다.
 	se->prev_sum_exec_runtime = se->sum_exec_runtime;
 }
 
@@ -4195,6 +4215,7 @@ wakeup_preempt_entity(struct sched_entity *curr, struct sched_entity *se);
 static struct sched_entity *
 pick_next_entity(struct cfs_rq *cfs_rq, struct sched_entity *curr)
 {
+	// cfs_rq의 rbtree의  가장 처음 왼쪽에 있는 left 큐를 저장한다.
 	struct sched_entity *left = __pick_first_entity(cfs_rq);
 	struct sched_entity *se;
 
@@ -4202,26 +4223,35 @@ pick_next_entity(struct cfs_rq *cfs_rq, struct sched_entity *curr)
 	 * If curr is set we have to see if its left of the leftmost entity
 	 * still in the tree, provided there was anything in the tree at all.
 	 */
+	//left 가 NULL 이거나, curr보다 vruntime이 많은 경우left를 curr로 설정한다. 
 	if (!left || (curr && entity_before(curr, left)))
 		left = curr;
 
+	// rbtree의 left를 우선적으로 실행하니 스케쥴엔티티를 left로 설정한다. 
 	se = left; /* ideally we run the leftmost entity */
 
 	/*
 	 * Avoid running the skip buddy, if running something else can
 	 * be done without getting too unfair.
 	 */
+	// cfs 런큐의 스케드엔티티가 스킵되어야 하는 테스크라면 
 	if (cfs_rq->skip == se) {
 		struct sched_entity *second;
 
+		// se가 curr인 경우
 		if (se == curr) {
+			// cfs_rq에서 가장 왼쪽의 엔티티를 second에 대입한다.
 			second = __pick_first_entity(cfs_rq);
+		// se가 curr가 아닌경우
 		} else {
+			// 그다음 left를 찾는다. 
 			second = __pick_next_entity(se);
+			// second가 NULL이고 second가 vruntime이 많다면 second를 curr로 대입한다.
 			if (!second || (curr && entity_before(curr, second)))
 				second = curr;
 		}
 
+		// second 가 NULL이 아니고 left 가 preemption이 불가능 하면 se에 second를 대입
 		if (second && wakeup_preempt_entity(second, left) < 1)
 			se = second;
 	}
@@ -4229,17 +4259,20 @@ pick_next_entity(struct cfs_rq *cfs_rq, struct sched_entity *curr)
 	/*
 	 * Prefer last buddy, try to return the CPU to a preempted task.
 	 */
+	// last buddy? 가  준비될고 left 엔티티가 preemption이 불가능하면 se에 last를 대입
 	if (cfs_rq->last && wakeup_preempt_entity(cfs_rq->last, left) < 1)
 		se = cfs_rq->last;
 
 	/*
 	 * Someone really wants this to run. If it's not unfair, run it.
 	 */
+	// next 엔티티가 유효하고 left가 선점이 불가능하면 se에 next 엔티티를 대입  
 	if (cfs_rq->next && wakeup_preempt_entity(cfs_rq->next, left) < 1)
 		se = cfs_rq->next;
 
 	clear_buddies(cfs_rq, se);
-
+	
+	// 스케쥴 엔티티를 반환
 	return se;
 }
 
@@ -4251,19 +4284,24 @@ static void put_prev_entity(struct cfs_rq *cfs_rq, struct sched_entity *prev)
 	 * If still on the runqueue then deactivate_task()
 	 * was not called and update_curr() has to be done:
 	 */
+	// 이전 스케쥴러 엔티티가 런큐에 있으면 cfs_rq의 실행시간에 대한 정보를 업데이트 한다.
 	if (prev->on_rq)
 		update_curr(cfs_rq);
 
 	/* throttle cfs_rqs exceeding runtime */
 	check_cfs_rq_runtime(cfs_rq);
 
+	// SCHED_DEBUG 시 디버깅을 위한 nr_spread_over 값을 갱신
 	check_spread(cfs_rq, prev);
 
 	if (prev->on_rq) {
+		//스케쥴러 통계 대기를 위한 통계정보를 설정
 		update_stats_wait_start(cfs_rq, prev);
 		/* Put 'current' back into the tree. */
+		// 이전 스케쥴러 엔티티를 인큐한다.
 		__enqueue_entity(cfs_rq, prev);
 		/* in !on_rq case, update occurred at dequeue */
+		// 이전 테스크 엔티티와cfs 런큐의 load average를 업데이트 한다.  
 		update_load_avg(cfs_rq, prev, 0);
 	}
 	cfs_rq->curr = NULL;
@@ -6644,12 +6682,15 @@ static void set_last_buddy(struct sched_entity *se)
 
 static void set_next_buddy(struct sched_entity *se)
 {
+	// 엔티티가 런큐에 있지 않고 idle 테스크가 아니면 함수를 나온다. 
 	if (entity_is_task(se) && unlikely(task_has_idle_policy(task_of(se))))
 		return;
 
 	for_each_sched_entity(se) {
+		// 엔티티가 런큐에 없으면 함수를 나오고
 		if (SCHED_WARN_ON(!se->on_rq))
 			return;
+		//cfs 런큐의 next를 se로 나란히 대입
 		cfs_rq_of(se)->next = se;
 	}
 }
