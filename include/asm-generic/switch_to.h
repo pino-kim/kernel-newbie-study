@@ -17,7 +17,7 @@
  */
 extern struct task_struct *__switch_to(struct task_struct *,
 				       struct task_struct *);
-// 이전테스크의 구조체와 다음테스크의 구조체를 교체 후last 에 덮어쓴다. 
+// -> prev 태스크의 실행정보를 백업하고 next 태스크의 실행정보를 복원하여 태스크스위칭을 수행함.
 #define switch_to(prev, next, last)					\
 	do {								\
 		((last) = __switch_to((prev), (next)));			\

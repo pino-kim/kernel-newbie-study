@@ -4161,11 +4161,14 @@ check_preempt_tick(struct cfs_rq *cfs_rq, struct sched_entity *curr)
 		resched_curr(rq_of(cfs_rq));
 }
 
+// @se가 @cfs_rq에 enqueue되어 있다면 @se를 dequeue함
+// @se를 cfs_rq의 current 엔티티로 설정함.
 static void
 set_next_entity(struct cfs_rq *cfs_rq, struct sched_entity *se)
 {
 	/* 'current' is not kept within the tree. */
-	// 스케쥴러 엔티티가 런큐에 있을시 
+	// 스케쥴러 엔티티가 런큐에 있을시
+	// -> @se가 런큐(rq, cfs_rq)에 enqueue되어 있다면
 	if (se->on_rq) {
 		/*
 		 * Any task has to be enqueued before it get to execute on
@@ -4175,14 +4178,15 @@ set_next_entity(struct cfs_rq *cfs_rq, struct sched_entity *se)
 		// 스케줄러 대기관련 통계정보를 설정
 		update_stats_wait_end(cfs_rq, se);
 		// 해당 런큐를 dequeue 한다.
+		// -> @se를 @cfs_rq에서 dequeue함
 		__dequeue_entity(cfs_rq, se);
-		// 
 		update_load_avg(cfs_rq, se, UPDATE_TG);
 	}
-	
+
 	// 스케쥴러 시작관련 통계값들을 설정
 	update_stats_curr_start(cfs_rq, se);
 	// cfs 런큐의 curr을 인자값으로 받은 스케쥴러 엔티티로 설정한다.
+	// -> @se를 cfs_rq의 current 엔티티로 설정함.
 	cfs_rq->curr = se;
 
 	/*
@@ -4212,10 +4216,17 @@ wakeup_preempt_entity(struct sched_entity *curr, struct sched_entity *se);
  * 3) pick the "last" process, for cache locality
  * 4) do not run the "skip" process, if something else is available
  */
+// @cfs_rq에서 실행될 엔티티를 선택함. 아래 중 하나가 선택됨.
+// 1) leftmost
+// 2) curr
+// 3) second leftmost
+// 4) last buddy
+// 4) next buddy
 static struct sched_entity *
 pick_next_entity(struct cfs_rq *cfs_rq, struct sched_entity *curr)
 {
 	// cfs_rq의 rbtree의  가장 처음 왼쪽에 있는 left 큐를 저장한다.
+	// -> @cfs_rq의 레드블랙트리에서 leftmost에 있는 엔티티를 구함
 	struct sched_entity *left = __pick_first_entity(cfs_rq);
 	struct sched_entity *se;
 
@@ -4224,6 +4235,9 @@ pick_next_entity(struct cfs_rq *cfs_rq, struct sched_entity *curr)
 	 * still in the tree, provided there was anything in the tree at all.
 	 */
 	//left 가 NULL 이거나, curr보다 vruntime이 많은 경우left를 curr로 설정한다. 
+	// -> 아래의 조건을 하나라도 만족하면 @curr를 leftmost로 사용함.
+	// 1) leftmost 엔티티가 존재하지 않거나
+	// 2) @curr가 leftmost 엔티티보다 vruntime이 작다면
 	if (!left || (curr && entity_before(curr, left)))
 		left = curr;
 
@@ -4235,18 +4249,21 @@ pick_next_entity(struct cfs_rq *cfs_rq, struct sched_entity *curr)
 	 * be done without getting too unfair.
 	 */
 	// cfs 런큐의 스케드엔티티가 스킵되어야 하는 테스크라면 
+	// -> 위에서 선택된 엔티티가 skip buddy라면
 	if (cfs_rq->skip == se) {
 		struct sched_entity *second;
 
 		// se가 curr인 경우
 		if (se == curr) {
 			// cfs_rq에서 가장 왼쪽의 엔티티를 second에 대입한다.
+			// -> vruntime 기준으로, curr(skip) < leftmost
 			second = __pick_first_entity(cfs_rq);
 		// se가 curr가 아닌경우
 		} else {
 			// 그다음 left를 찾는다. 
 			second = __pick_next_entity(se);
 			// second가 NULL이고 second가 vruntime이 많다면 second를 curr로 대입한다.
+			// -> vruntime 기준으로, leftmost(skip) < curr < second
 			if (!second || (curr && entity_before(curr, second)))
 				second = curr;
 		}
@@ -4271,13 +4288,14 @@ pick_next_entity(struct cfs_rq *cfs_rq, struct sched_entity *curr)
 		se = cfs_rq->next;
 
 	clear_buddies(cfs_rq, se);
-	
+
 	// 스케쥴 엔티티를 반환
 	return se;
 }
 
 static bool check_cfs_rq_runtime(struct cfs_rq *cfs_rq);
 
+// @prev가 완전히 dequeue된 상태가 아니라면 @cfs_rq의 레드블랙트리에 다시 enqueue함
 static void put_prev_entity(struct cfs_rq *cfs_rq, struct sched_entity *prev)
 {
 	/*
@@ -4294,11 +4312,13 @@ static void put_prev_entity(struct cfs_rq *cfs_rq, struct sched_entity *prev)
 	// SCHED_DEBUG 시 디버깅을 위한 nr_spread_over 값을 갱신
 	check_spread(cfs_rq, prev);
 
+	// -> @prev가 완전히 dequeue된 상태가 아니라면
 	if (prev->on_rq) {
 		//스케쥴러 통계 대기를 위한 통계정보를 설정
 		update_stats_wait_start(cfs_rq, prev);
 		/* Put 'current' back into the tree. */
 		// 이전 스케쥴러 엔티티를 인큐한다.
+		// @prev를 @cfs_rq의 레드블랙트리에 다시 enqueue함
 		__enqueue_entity(cfs_rq, prev);
 		/* in !on_rq case, update occurred at dequeue */
 		// 이전 테스크 엔티티와cfs 런큐의 load average를 업데이트 한다.  
@@ -6861,16 +6881,22 @@ again:
 			int pse_depth = pse->depth;
 
 			if (se_depth <= pse_depth) {
+				// @prev가 완전히 dequeue된 상태가 아니라면 @cfs_rq의 레드블랙트리에 다시 enqueue함
 				put_prev_entity(cfs_rq_of(pse), pse);
 				pse = parent_entity(pse);
 			}
 			if (se_depth >= pse_depth) {
+				// @se가 @cfs_rq에 enqueue되어 있다면 @se를 dequeue함
+				// @se를 cfs_rq의 current 엔티티로 설정함.
 				set_next_entity(cfs_rq_of(se), se);
 				se = parent_entity(se);
 			}
 		}
 
+		// @prev가 완전히 dequeue된 상태가 아니라면 @cfs_rq의 레드블랙트리에 다시 enqueue함
 		put_prev_entity(cfs_rq, pse);
+		// @se가 @cfs_rq에 enqueue되어 있다면 @se를 dequeue함
+		// @se를 cfs_rq의 current 엔티티로 설정함.
 		set_next_entity(cfs_rq, se);
 	}
 
@@ -6882,6 +6908,8 @@ simple:
 
 	do {
 		se = pick_next_entity(cfs_rq, NULL);
+		// @se가 @cfs_rq에 enqueue되어 있다면 @se를 dequeue함
+		// @se를 cfs_rq의 current 엔티티로 설정함.
 		set_next_entity(cfs_rq, se);
 		cfs_rq = group_cfs_rq(se);
 	} while (cfs_rq);

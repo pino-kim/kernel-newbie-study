@@ -442,9 +442,17 @@ static void release_task_stack(struct task_struct *tsk)
 }
 
 #ifdef CONFIG_THREAD_INFO_IN_TASK
+// -> @tsk 태스크와 연관된  커널스택의 참조카운트를 감소시킴
+//    커널스택을 더이상 참조하는 곳이 없다면(stack_refcount==0)
+//    커널스택을 free하고 연관된 태스크인 @tsk-> stack을 초기화함.
 void put_task_stack(struct task_struct *tsk)
 {
+	// -> @tsk 태스크와 연관된  커널스택의 참조카운트를 감소시킴
+	// -> 커널스택을 더이상 참조하는 곳이 없다면(stack_refcount==0)
+	//    커널스택을 free하고 연관된 태스크인 @tsk-> stack을 초기화함.
 	if (refcount_dec_and_test(&tsk->stack_refcount))
+		// -> 커널스택을 더이상 참조하는 곳이 없다면(stack_refcount==0)
+		//    커널스택을 free하고 연관된 태스크인 @tsk-> stack을 초기화함.
 		release_task_stack(tsk);
 }
 #endif

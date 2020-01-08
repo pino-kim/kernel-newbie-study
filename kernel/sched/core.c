@@ -3075,11 +3075,12 @@ static inline void prepare_task(struct task_struct *next)
 	 * such that any running task will have this set.
 	 */
 	// CONFIG_SMP 설정 시
-	// 다음 테스크를 cpu에 넣기위에 구조체의 on_cpu를 1로 설정한다.
+	// 다음 태스크를 cpu에 넣기위에 구조체의 on_cpu를 1로 설정한다.
 	next->on_cpu = 1;
 #endif
 }
 
+// @prev 태스크가 더이상 cpu를 사용하지 않으므로 on_rq 필드를 0으로 초기화한다.
 static inline void finish_task(struct task_struct *prev)
 {
 #ifdef CONFIG_SMP
@@ -3093,9 +3094,10 @@ static inline void finish_task(struct task_struct *prev)
 	 *
 	 * Pairs with the smp_cond_load_acquire() in try_to_wake_up().
 	 */
-	// 이전 테스크가 점유하고 있는 cpu를 초기화 해주는 역활을 함 
+	// 이전 태스크가 점유하고 있는 cpu를 초기화 해주는 역활을 함 
 	// CONFIG_SMP 가 설정되어 있을 시 smp_store_release 함수를 
 	// 사용하여 초기화를 하는 이는 다중 프로세서를 사용시 동시성 문제를 보장한다.
+	// TBD. on_rq와의 차이점, SMP  설정과의 관계가 왜 필요한지
 	smp_store_release(&prev->on_cpu, 0); 
 #endif
 }
@@ -3153,19 +3155,18 @@ static inline void finish_lock_switch(struct rq *rq)
  * prepare_task_switch sets up locking and calls architecture specific
  * hooks.
  */
+// @next가 이제 실행함을 on_cpu 필드에 기록함.
 static inline void
 prepare_task_switch(struct rq *rq, struct task_struct *prev,
 		    struct task_struct *next)
 {
 	kcov_prepare_switch(prev);
-	// 다은 테스크가 실행상태이면 해당 함수의 통계 정보를 수집
 	sched_info_switch(rq, prev, next);
 	perf_event_task_sched_out(prev, next);
-	// ?
 	rseq_preempt(prev);
-	// 다음 테스크에 의해 선점 당했을때 호출 하는 함수 ?
 	fire_sched_out_preempt_notifiers(prev, next);
-	// 다음 테스크가 사용됨을 on_cpu에 기록
+	// 다음 태스크가 사용됨을 on_cpu에 기록
+	// -> @next가 이제 실행함을 on_cpu 필드에 기록함.
 	prepare_task(next);
 	prepare_arch_switch(next);
 }
@@ -3189,12 +3190,26 @@ prepare_task_switch(struct rq *rq, struct task_struct *prev,
  * past. prev == current is still correct but we need to recalculate this_rq
  * because prev may have moved to another CPU.
  */
+
+// 더이상 cpu를 사용하지 않는 prev 태스크를 위한 후처리를 수행함
+//
+// 1) prev 태스크가 더이상 cpu를 사용하지 않음을 나타내기 위해 on_cpu를 0으로 초기화함
+// 2) current runqueue의 lock을 해제함
+// 3) prev 태스크가 커널 쓰레드 라면
+//    - mm_struct 구조체의 참조카운트를 감소시킴
+//    - 더이상 참조하는 곳이 없다면 해당 자료구조를 해제함.
+// 4) prev 태스크가 종료중이라면(TASK_DEAD)
+//    - 스케줄링 클래스별로 태스크 종료시에 수행할 추가작업을 진행함
+//    - prev 태스크의 커널스택, task_struct 구조체의 참조카운트를 감소시킴.
+//    - 더이상 참조하는 곳이 없다면 해당 자료구조를 해제함.
 static struct rq *finish_task_switch(struct task_struct *prev)
 	__releases(rq->lock)
 {
-	struct rq *rq = this_rq(); 현재 //cpu에서 runqueue 를 가져옴
-	struct mm_struct *mm = rq->prev_mm; // 이전 런큐의 메모리 값을 벡업 
-	long prev_state; 
+	// -> current cpu의런큐를구함
+	struct rq *rq = this_rq();
+	// -> 이전 current task가 사용한 mm_struct를 가리키는 필드
+	struct mm_struct *mm = rq->prev_mm; 
+	long prev_state;
 
 	/*
 	 * The previous task will have left us with a preempt_count of 2
@@ -3229,14 +3244,15 @@ static struct rq *finish_task_switch(struct task_struct *prev)
 	prev_state = prev->state; 
 	vtime_task_switch(prev); 
 	perf_event_task_sched_in(prev, current);
-	//이전 테스크의 on_cpu를 초기화
+	//이전 태스크의 on_cpu를 초기화
+	// -> @prev 태스크가 더이상 cpu를 사용하지 않으므로 on_cpu 필드를 0으로 초기화한다.
 	finish_task(prev); 
 	//해당 런큐의 lock을 해제
 	finish_lock_switch(rq); 
 	finish_arch_post_lock_switch();  
 	kcov_finish_switch(current); 
 
-	//현재 테스크가 선점시 선점한다고 알리는 함수로 보임.
+	//현재 태스크가 선점시 선점한다고 알리는 함수로 보임.
 	fire_sched_in_preempt_notifiers(current);
 	/*
 	 * When switching through a kernel thread, the loop in
@@ -3250,15 +3266,27 @@ static struct rq *finish_task_switch(struct task_struct *prev)
 	 *   provided by mmdrop(),
 	 * - a sync_core for SYNC_CORE.
 	 */
+	// -> 이전 태스크가 커널  쓰레드라면 
 	if (mm) {
 		membarrier_mm_sync_core_before_usermode(mm);  
-		// 만약 mm의 참조 카우트를 감소하는게 실패하면 이전테스크  메모리의 자료구조를 모두 해제
+		// 직전까지 참조하던 prev가 사용하는 mm_struct의 참조카운트랄 감소시켜야 함.
+		// 만약 mm의 참조 카우트를 감소하는게 실패하면 이전태스크  메모리의 자료구조를 모두 해제
+		// -> prev_mm이 유효 할시 
 		mmdrop(mm);
 	}
+
+	// -> 종료중인 태스크에 대한 처리를 진행하고 있다면,
+	//    1) 스케줄링 클래스별로 태스크 종료시에 수행할 추가작업을 진행한다.
+	//    2) 이전 태스크 커널스택과 task_struct 구조체의  참조카운터를 감소시킨다.
+	//	 더이상 자료구조를 참조 하는 곳이 없다면 해당 자료구조를 해제한다.
+
+	// -> 그럴리가 희박하지만 이전 태스크가 종료중이라면
 	if (unlikely(prev_state == TASK_DEAD)) { 
 		// 이전 테크스가 종료 중이라면
+		// -> 해당 태스크의 스케줄링 클래스에 task_dead()가 정의되어 있다면
+		//    호출하여 스케줄링 클래스별로 해야할 마무리 작업을 진행한다.
 		if (prev->sched_class->task_dead) 
-			prev->sched_class->task_dead(prev); // 해당 테스크 클레스의task_dead 함수를 불러온다.
+			prev->sched_class->task_dead(prev); // 해당 태스크 클레스의task_dead 함수를 불러온다.
 
 		/*
 		 * Remove function-return probe instances associated with this
@@ -3267,14 +3295,18 @@ static struct rq *finish_task_switch(struct task_struct *prev)
 		kprobe_flush_task(prev); 
 
 		/* Task is done with its stack. */
-		 // 이전 테스크가 종료시 참조 카운터를 감소하고 task_struct 구조체를 초기화한다.
+		 // 이전 태스크가 종료시 참조 카운터를 감소 task_struct 구조체를 초기화한다.
+		// -> @tsk 태스크와 연관된  커널스택의 참조카운트를 감소시킴
+		//    커널스택을 더이상 참조하는 곳이 없다면(stack_refcount==0)
+		//    커널스택을 free하고 연관된 태스크인 @tsk-> stack을 초기화함.
 		put_task_stack(prev); 
-
+		// -> 이전 태스크의 task_struct 구조체의 참조 카운트를 감소 시킨다.
+		//    task_struct 구조체를 더이상 참조하는 곳이 없다면 구조체를 해제한다.
 		put_task_struct_rcu_user(prev); 
 	}
 
 	// COFNIG_NO_HZ_FULL이 enable 된경우해당루트로 진입.
-	tick_nohz_task_switch();  
+	tick_nohz_task_switch(); 
 	// 런큐를 반환
 	return rq;
 }
@@ -3347,12 +3379,32 @@ asmlinkage __visible void schedule_tail(struct task_struct *prev)
 /*
  * context_switch - switch to the new MM and the new thread's register state.
  */
+// (1) @next가  실행함을 on_cpu 필드에 기록한다.
+// (2)@next가 태스크가 커널 태스크라면,
+//    @next 태스크의 ttbr0 필드를 @next 태스크가 사용할 페이지 테이블로 설정함.
+//    @next가 @prev가 사용하던 주소공간을 사용하도록 active_mm 필드를 설정한다.
+//    1) prev가 유저 테스크라면,
+//	 @next가 @prev가 사용한 active_mm을 사용하므로 active_mm의 참조카운트를 증가함.
+//    2) prev가 커널 테스라면,
+//	 더이상 current가 아닌 @prev는 유저 주소공간을 더이상 사용하지 않으므로 active_mm 필드를 초기화한다. 
+// (3)@next  태스크가 유저 태스크라면,
+//     @next 태스크의 유저 주소 공간을 사용할 수 있게 아래를 설정한다.
+//      -  TTBR0 레지스터가 @next 태스크의 페이지테이블을 가리키도록 설정
+//      -  @next mm_struct의 ASID를 갱신한다
+//      -  next 태스크의 ttbr0 필드를 페이지테이블을 가리키도록 설정
+//    1)@prev 테스크가 커널 테스크라면,
+//	@prev 태스크의 mm_struct 구조체를 @rq에서 이전에 사용된 mm_struct 구조체로 설정함.
+//      active_mm 필드는 태스크가 커널 스레드를 나타낼 때, 자신이 빌려쓰는 다른 mm_struct 구조체를 가리킴
+//      이제 더이상 사용하지 않을 것이므로 이 필드를 초기화함.
+// (4) @prev의 실행정보를 백업하고 next 태스크의 실행정보를 복원하여 태스크스위칭을 수행함.
+// (5) @prev를 위한 후처리를 수행함.
 static __always_inline struct rq *
 context_switch(struct rq *rq, struct task_struct *prev,
 	       struct task_struct *next, struct rq_flags *rf)
 {
-	// 이전 테스크의 구조체를 다음 테스크의 구조체로 변경하기 위한 준비를 한다.
+	// 이전 태스크의 구조체를 다음 태스크의 구조체로 변경하기 위한 준비를 한다.
 	// on_cpu 플레그를 1로 설정한다. 
+	// -> @next가 이제 실행함을 on_cpu 필드에 기록함.
 	prepare_task_switch(rq, prev, next);
 
 	/*
@@ -3369,21 +3421,24 @@ context_switch(struct rq *rq, struct task_struct *prev,
 	 * kernel ->   user   switch + mmdrop() active
 	 *   user ->   user   switch
 	 */
-	// 다음 테스크가 커널 테스크라면
+	// 다음 태스크가 커널 태스크라면
 	if (!next->mm) {                                // to kernel
-		// 이전 테스크 구조체에서 ttb0 register 값을 업데이트 한다. ?
+		// @next 태스크의 ttbr0 필드를 @next 태스크가 사용할 페이지 테이블로 설정함.
 		enter_lazy_tlb(prev->active_mm, next);
-		// 이전 테스크의 주소공간을 참조 한다.
+		// next task_struct 구조체의 active_mm이  prev의 active_mm을 참조하게 한다.
+		// -> @next가 @prev가 사용하던 유저 주소공간을 사용하도록 active_mm 필드를 설정한다.
 		next->active_mm = prev->active_mm;
-		// 이전 테스크가 유저 테스크 일시 참조 카운터를 증가한다.
+		// 이전 태스크가 유저 태스크 일시 참조 카운터를 증가한다.
+		// -> @next가 @prev가 사용한 active_mm을 사용하므로 active_mm의 참조카운트를 증가함.
 		if (prev->mm)                           // from user
 			mmgrab(prev->active_mm);
-		// 이전 테스크가 커널 테스크 라면 참조페이지를 초기화 한다.
+		// 더이상 current가 아닌 @prev는 유저 주소공간을 더이상 사용하지 않으므로 active_mm 필드를 초기화한다. 
 		else
 			prev->active_mm = NULL;
-	// 다음 테스크가 유저 테스크라면	
+	// 다음 태스크가 유저 태스크라면
 	} else {                                        // to user
-		// 다음 테스크가 유저 공간의 주소를 참조한다.
+		// 다음 태스크가 유저 공간의 주소를 참조한다.
+		// -> 아닌거 같음.
 		membarrier_switch_mm(rq, prev->active_mm, next->mm);
 		/*
 		 * sys_membarrier() requires an smp_mb() between setting
@@ -3393,14 +3448,22 @@ context_switch(struct rq *rq, struct task_struct *prev,
 		 * case 'prev->active_mm == next->mm' through
 		 * finish_task_switch()'s mmdrop().
 		 */
+		// @next 태스크의 유저 주소 공간을 사용할 수 있게 아래를 설정한다.
+		//     1) TTBR0 레지스터가 @next 태스크의 페이지테이블을 가리키도록 설정
+		//     2) @next mm_struct의 ASID를 갱신
+		//     3) next 태스크의 ttbr0 필드를 페이지테이블을 가리키도록 설정
 		switch_mm_irqs_off(prev->active_mm, next->mm, next);
-		
-		// 이전의 테스크가 커널 테스크라면 주소 공간을 참조 후에
-		// 유저공간인 이전 테스크의 주소공간을 초기화 한다 	
+
+		// 이전의 태스크가 커널 태스크라면 주소 공간을 참조 후에
+		//  유저공간인 이전 태스크의 주소공간을 초기화 한다.
+		//
+		// -> @prev 태스크의 mm_struct 구조체를 @rq에서 이전에 사용된 mm_struct 구조체로 설정함.
+		//    active_mm 필드는 태스크가 커널 스레드를 나타낼 때, 자신이 빌려쓰는 다른 mm_struct 구조체를 가리킴
+		//    이제 더이상 사용하지 않을 것이므로 이 필드를 초기화함.
 		if (!prev->mm) {                        // from kernel
 			/* will mmdrop() in finish_task_switch(). */
 			rq->prev_mm = prev->active_mm;
-			prev->active_mm = NULL;
+			prev->active_mm = NUL uL;
 		}
 	}
 
@@ -3409,10 +3472,16 @@ context_switch(struct rq *rq, struct task_struct *prev,
 	prepare_lock_switch(rq, next, rf);
 
 	/* Here we just switch the register state and the stack. */
-	//레지스트 상태와 스텍을 교체한다.
+	// -> prev 태스크의 실행정보를 백업하고 next 태스크의 실행정보를 복원하여 태스크스위칭을 수행함.
 	switch_to(prev, next, prev);
 	barrier();
 
+	// @prev를 위한 후처리를 수행함
+	// 1) @prev 태스크의 on_cpu 필드 0으로 초기화
+	// 2) @prev 태스크가 커널 쓰레드 라면 mm_struct 구조체의 참조카운트를 감소시키고 필요시 해제함.
+	// 3) @prev 태스크가 종료중이라면(TASK_DEAD)
+	//    - prev 태스크의 커널스택, task_struct 구조체의 참조카운트를 감소시킴.
+	//    - 더이상 참조하는 곳이 없다면 해당 자료구조를 해제함.
 	return finish_task_switch(prev);
 }
 
@@ -4060,10 +4129,15 @@ static void __sched notrace __schedule(bool preempt)
 	update_rq_clock(rq);
 
 	switch_count = &prev->nivcsw;
+	// 아래 조건을 모두 만족할 경우
+	// 1) 커널선점이 아닌 패스에서 스케줄링이 시도되고
+	// 2) current 태스크의 상태가 TASK_RUNNING이 아니라면
 	if (!preempt && prev->state) {
+		// 예외적으로, 처리할 시그널이 있다면 TASK_RUNNING 상태로 전환함
 		if (signal_pending_state(prev->state, prev)) {
 			prev->state = TASK_RUNNING;
 		} else {
+			// @prev를 deactivate(dequeue+etc)한다
 			deactivate_task(rq, prev, DEQUEUE_SLEEP | DEQUEUE_NOCLOCK);
 
 			if (prev->in_iowait) {
@@ -4074,16 +4148,23 @@ static void __sched notrace __schedule(bool preempt)
 		switch_count = &prev->nvcsw;
 	}
 
+	// @rq에서 next로 실행할 태스크를 선택함
 	next = pick_next_task(rq, prev, &rf);
+	// TIF_NEED_RESCHED 플래그를 초기화함.
+	// 왜??? -> 이제 스위칭할 거니까??
 	clear_tsk_need_resched(prev);
+	// tbd
 	clear_preempt_need_resched();
 
+	// prev와 next가 다르다면 컨텍스트 스위칭을 해야 함.
 	if (likely(prev != next)) {
+		// current rq의 스위칭횟수를 증가
 		rq->nr_switches++;
 		/*
 		 * RCU users of rcu_dereference(rq->curr) may not see
 		 * changes to task_struct made by pick_next_task().
 		 */
+		// current rq의 current task 정보를 갱신
 		RCU_INIT_POINTER(rq->curr, next);
 		/*
 		 * The membarrier system call requires each architecture
@@ -4099,12 +4180,18 @@ static void __sched notrace __schedule(bool preempt)
 		 * - switch_to() for arm64 (weakly-ordered, spin_unlock
 		 *   is a RELEASE barrier),
 		 */
+		// @prev의 컨텍스트스위칭 통계를 갱신
 		++*switch_count;
 
 		trace_sched_switch(preempt, prev, next);
 
 		/* Also unlocks the rq: */
+		// 새롭게 선택된 next 태스크를 current 태스크로 실행하기 위해 context를 교체한다.
+		// - current 태스크가 사용할 유저공간 페이지테이블의 주소 설정(TTBR0 register, ttbr0 fiedl)
+		// - current 태스크의 실행정보를 레지스터에 복원함.
+		// - prev 태스크를 위한 후처리를 수행함.
 		rq = context_switch(rq, prev, next, &rf);
+	// prev와 next가 같다면 스위칭을 하지 않음.
 	} else {
 		rq->clock_update_flags &= ~(RQCF_ACT_SKIP|RQCF_REQ_SKIP);
 		rq_unlock_irq(rq, &rf);

@@ -494,26 +494,30 @@ static void entry_task_switch(struct task_struct *next)
 /*
  * Thread switching.
  */
+// next 태스크를 사용하기 위해 prev 태스크의 래지스터 정보와 커널 스택을 next 태스크와 교환 함.
+//
+// -> 태스크 스위칭을 하기 위해, 레지스터에 저장된 컨텍스트 정보(레지스터 값)를 @prev의 자료구조에 백업하고
+// @next의 컨텍스트 정보를 레지스터에 복원한다.
 __notrace_funcgraph struct task_struct *__switch_to(struct task_struct *prev,
 				struct task_struct *next)
 {
 	struct task_struct *last;
 
-	// 이전 테스크의 부동소수점과 Single instruction, multiple data 를 위한 구조체 정보를 기록 ?
+	// 이전 태스크의 부동소수점과 Single instruction, multiple data 를 위한 구조체 정보를 기록 ?
 	fpsimd_thread_switch(next);
-	// 이전 테스크의 고유 쓰레드 정적 변수를 다음 테스크 구조체에 기록?
+	// 이전 태스크의 고유 쓰레드 정적 변수를 다음 태스크 구조체에 기록?
 	tls_thread_switch(next);
-	// 이전테스크의 하드웨어 중단점 포인트를 다음테스크 구조체에 기록 ?
+	// 이전태스크의 하드웨어 중단점 포인트를 다음태스크 구조체에 기록 ?
 	hw_breakpoint_thread_switch(next);
-	// 이전 테스크의 PID 정보를 다음 테스크 구조체에 기록 ? 
+	// 이전 태스크의 PID 정보를 다음 태스크 구조체에 기록 ? 
 	contextidr_thread_switch(next);
-	// 이전 테스크의 엔트리 정보를 다음 테스크 구조체에 기록 ?
+	// 이전 태스크의 엔트리 정보를 다음 태스크 구조체에 기록 ?
 	entry_task_switch(next);
-	// 이전 테스크의 User Acess Overrride 정보를 다음 테스크 구조체에 기록 ? 
+	// 이전 태스크의 User Acess Overrride 정보를 다음 태스크 구조체에 기록 ? 
 	uao_thread_switch(next);
-	// 이전 테스크의 pointer authentication 정보를 다음 테스크 구조체에 기록 ?
+	// 이전 태스크의 pointer authentication 정보를 다음 태스크 구조체에 기록 ?
 	ptrauth_thread_switch(next); 
-	// 이전 테스크의 Speculative Store Bypass 상태를 다음 테스크의 구조체에 기록 ?
+	// 이전 태스크의 Speculative Store Bypass 상태를 다음 태스크의 구조체에 기록 ?
 	ssbs_thread_switch(next);
 
 	/*
@@ -528,7 +532,7 @@ __notrace_funcgraph struct task_struct *__switch_to(struct task_struct *prev,
 	dsb(ish);
 
 	/* the actual thread switch */
-	// 실질적으로 이전 테스크의task 정보와 다음 테스크의 레지스트 정보와 커널 스텍을 스위칭 한다.   
+	// 실질적으로 이전 태스크의task 정보와 다음 태스크의 레지스터 정보와 커널 스텍을 스위칭 한다.   
 	last = cpu_switch_to(prev, next);
 
 	return last;

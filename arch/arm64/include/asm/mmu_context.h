@@ -183,14 +183,20 @@ static inline void update_saved_ttbr0(struct task_struct *tsk,
 {
 	u64 ttbr;
 
+	// 이미 혹은 추후에  __switch_to()에서 아래코드를 수행했으므로 중복을 피하기 위함.
 	if (!system_uses_ttbr0_pan())
 		return;
 
+	// @mm이 idle_mm이라면
 	if (mm == &init_mm)
+		// 유저 주소공간에 대한 페이지테이블의 주소로 zero page를 설정함.
 		ttbr = __pa_symbol(empty_zero_page);
 	else
+		// 유저 주소공간에 대한 페이지테이블의 주소로 @mm이 사용하던 pgd의 주소|ASID로 이루어진 주소를 설정함.
+		// TTBR0 레지스터가 가리키는 주소를 ttbr0 필드에 설정함.
 		ttbr = virt_to_phys(mm->pgd) | ASID(mm) << 48;
 
+	// TTBR0 레지스터가 가리키는 주소를 ttbr0 필드에 설정함.
 	WRITE_ONCE(task_thread_info(tsk)->ttbr0, ttbr);
 }
 #else
@@ -210,6 +216,8 @@ enter_lazy_tlb(struct mm_struct *mm, struct task_struct *tsk)
 	update_saved_ttbr0(tsk, &init_mm);
 }
 
+// -> @next가 init_mm이라면 유저 주소공간에 대한 페이지테이블의 주소를 제로페이지로 설정한다.
+//    mm_struct 구조체의 ASID 값을갱신한다.
 static inline void __switch_mm(struct mm_struct *next)
 {
 	unsigned int cpu = smp_processor_id();
@@ -218,20 +226,28 @@ static inline void __switch_mm(struct mm_struct *next)
 	 * init_mm.pgd does not contain any user mappings and it is always
 	 * active for kernel addresses in TTBR1. Just set the reserved TTBR0.
 	 */
-	//다음 테스크의 구조체가 init_mm 임을 확인한뒤 ttbr0 레지스트를 
-    if (next == &init_mm) {
-		//페이지 테이블의 시작주소로 가르키게 한다.
-        cpu_set_reserved_ttbr0();
+	// next mm_struct 구조체가 init_mm 라면
+	if (next == &init_mm) {
+		// 유저 주소공간에 대한 페이지 테이블의 주소를 제로페이지로 설정한다.
+		cpu_set_reserved_ttbr0();
 		return;
 	}
 
+	// next mm_struct 구조체의 ASID를 갱신함.
 	check_and_switch_context(next, cpu);
 }
 
+// @next 태스크의 유저 주소 공간을 사용할 수 있게 아래를 설정한다.
+//     1) TTBR0 레지스터가 @next 태스크의 페이지테이블을 가리키도록 설정
+//     2) @next mm_struct의 ASID를 갱신
+//     3) next 태스크의 ttbr0 필드를 페이지테이블을 가리키도록 설정
 static inline void
 switch_mm(struct mm_struct *prev, struct mm_struct *next,
 	  struct task_struct *tsk)
 {
+	// -> @prev mm_struct 구조체가 next와 같지 않다면,
+	//     next가 init_mm이라면 유저 주소공간에 대한 페이지테이블의 주소를 제로페이지로 설정한다.
+	//     mm_struct 구조체의 ASID 값을갱신한다.
 	if (prev != next)
 		__switch_mm(next);
 
@@ -241,7 +257,8 @@ switch_mm(struct mm_struct *prev, struct mm_struct *next,
 	 * ASID has changed since the last run (following the context switch
 	 * of another thread of the same process).
 	 */
-    // next 구조체에 ttbr0 레지스터를 업데이트 한다.
+	// TTBR0 레지스터가 next 구조체에 ttbr0 레지스터를 업데이트 한다.
+	// -> next 태스크가 사용할 유저주소공간용 페이지 테이블 주소를 ttbr0 변수에 설정함.
 	update_saved_ttbr0(tsk, next);
 }
 
